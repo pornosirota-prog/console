@@ -14,15 +14,21 @@ public class TerminalView : MonoBehaviour
     private readonly Queue<string> _queue = new Queue<string>();
     private Coroutine _printer;
     private int _symbolsUntilClick;
+    private bool _autoScroll = true;
 
     private const float MinDelay = 0.005f;
     private const float MaxDelay = 0.02f;
+    private const float BottomSnapThreshold = 0.02f;
 
     public void Initialize(TextMeshProUGUI output, ScrollRect scrollRect)
     {
         _output = output;
         _scrollRect = scrollRect;
         _output.textWrappingMode = TextWrappingModes.Normal;
+        if (_scrollRect != null)
+        {
+            _scrollRect.onValueChanged.AddListener(OnScrollChanged);
+        }
         ResetClickCounter();
     }
 
@@ -97,7 +103,7 @@ public class TerminalView : MonoBehaviour
     {
         _output.text = _buffer.ToString();
         Canvas.ForceUpdateCanvases();
-        if (_scrollRect != null)
+        if (_scrollRect != null && _autoScroll)
         {
             _scrollRect.verticalNormalizedPosition = 0f;
         }
@@ -123,6 +129,12 @@ public class TerminalView : MonoBehaviour
     private void ResetClickCounter()
     {
         _symbolsUntilClick = Random.Range(2, 5);
+    }
+
+    private void OnScrollChanged(Vector2 position)
+    {
+        var isAtBottom = position.y <= BottomSnapThreshold;
+        _autoScroll = isAtBottom;
     }
 
     private static float RandomDelay()
