@@ -1,3 +1,5 @@
+using System.Collections;
+using System.Collections.Generic;
 using System.Text;
 using TMPro;
 using UnityEngine;
@@ -7,23 +9,31 @@ public class TerminalView : MonoBehaviour
 {
     private TextMeshProUGUI _output;
     private ScrollRect _scrollRect;
+    private TerminalSfx _sfx;
     private readonly StringBuilder _buffer = new StringBuilder();
+    private readonly Queue<string> _queue = new Queue<string>();
+    private Coroutine _printer;
+    private int _symbolsUntilClick;
+
+    private const float MinDelay = 0.005f;
+    private const float MaxDelay = 0.02f;
 
     public void Initialize(TextMeshProUGUI output, ScrollRect scrollRect)
     {
         _output = output;
         _scrollRect = scrollRect;
+        _output.textWrappingMode = TextWrappingModes.Normal;
+        ResetClickCounter();
+    }
+
+    public void SetAudio(TerminalSfx sfx)
+    {
+        _sfx = sfx;
     }
 
     public void PrintLine(string line)
     {
-        if (_buffer.Length > 0)
-        {
-            _buffer.AppendLine();
-        }
-
-        _buffer.Append(line);
-        ApplyBuffer();
+        Enqueue(line ?? string.Empty);
     }
 
     public void PrintBlock(string block)
@@ -31,8 +41,56 @@ public class TerminalView : MonoBehaviour
         var lines = block.Replace("\r\n", "\n").Split('\n');
         foreach (var line in lines)
         {
-            PrintLine(line);
+            Enqueue(line);
         }
+    }
+
+    private void Enqueue(string line)
+    {
+        _queue.Enqueue(line);
+        if (_printer == null)
+        {
+            _printer = StartCoroutine(ProcessQueue());
+        }
+    }
+
+    private IEnumerator ProcessQueue()
+    {
+        while (_queue.Count > 0)
+        {
+            var line = _queue.Dequeue();
+            yield return StartCoroutine(TypeLine(line));
+        }
+
+        _printer = null;
+    }
+
+    private IEnumerator TypeLine(string line)
+    {
+        if (_buffer.Length > 0)
+        {
+            AppendChar('\n');
+            yield return new WaitForSeconds(RandomDelay());
+        }
+
+        for (var i = 0; i < line.Length; i++)
+        {
+            var character = line[i];
+            AppendChar(character);
+            yield return new WaitForSeconds(RandomDelay());
+        }
+
+        if (line.Length == 0)
+        {
+            yield return new WaitForSeconds(RandomDelay());
+        }
+    }
+
+    private void AppendChar(char character)
+    {
+        _buffer.Append(character);
+        TryPlayKey(character);
+        ApplyBuffer();
     }
 
     private void ApplyBuffer()
@@ -43,6 +101,33 @@ public class TerminalView : MonoBehaviour
         {
             _scrollRect.verticalNormalizedPosition = 0f;
         }
+    }
+
+    private void TryPlayKey(char character)
+    {
+        if (char.IsWhiteSpace(character))
+        {
+            return;
+        }
+
+        _symbolsUntilClick--;
+        if (_symbolsUntilClick > 0)
+        {
+            return;
+        }
+
+        _sfx?.PlayKey();
+        ResetClickCounter();
+    }
+
+    private void ResetClickCounter()
+    {
+        _symbolsUntilClick = Random.Range(2, 5);
+    }
+
+    private static float RandomDelay()
+    {
+        return Random.Range(MinDelay, MaxDelay);
     }
 }
 
@@ -70,11 +155,13 @@ public class CommandRouter
 {
     private readonly GameState _state;
     private readonly TerminalView _view;
+    private readonly TerminalSfx _sfx;
 
-    public CommandRouter(GameState state, TerminalView view)
+    public CommandRouter(GameState state, TerminalView view, TerminalSfx sfx)
     {
         _state = state;
         _view = view;
+        _sfx = sfx;
     }
 
     public void Handle(string rawCommand)
@@ -118,6 +205,7 @@ public class CommandRouter
         else
         {
             _view.PrintLine("Unknown command. Type 'help'.");
+            _sfx?.PlayError();
         }
     }
 
@@ -159,6 +247,7 @@ public class CommandRouter
 
         _state.Connect(target);
         _view.PrintBlock("CONNECTED: unit_12\nROLE: SECURITY\nSTATE: CONFLICTED\nPOLICY:\n  - PROTECT ZONE\n  - DO NOT HARM HUMANS\nEVENT: Human presence detected in restricted zone.\nType 'patch' to propose a behavior fix.");
+        _sfx?.PlayBeep();
     }
 
     private void HandlePatch(string command)
@@ -177,6 +266,7 @@ public class CommandRouter
             {
                 var stability = _state.ApplyPatch(option[0]);
                 _view.PrintBlock($"PATCH APPLIED: {option}\nSTABILITY: {stability}%\nunit_12 updated.\nNext: scan for supervisor node (todo).");
+                _sfx?.PlayBeep();
                 return;
             }
         }
@@ -190,17 +280,19 @@ public class TerminalController : MonoBehaviour
     private TerminalView _view;
     private TMP_InputField _input;
     private CommandRouter _router;
+    private TerminalSfx _sfx;
 
-    public void Bind(TerminalView view, TMP_InputField input)
+    public void Bind(TerminalView view, TMP_InputField input, TerminalSfx sfx)
     {
         _view = view;
         _input = input;
+        _sfx = sfx;
     }
 
     private void Start()
     {
         var state = new GameState();
-        _router = new CommandRouter(state, _view);
+        _router = new CommandRouter(state, _view, _sfx);
         _input.onSubmit.AddListener(OnSubmit);
         _input.onDeselect.AddListener(_ => _input.ActivateInputField());
         _input.ActivateInputField();
@@ -209,7 +301,22 @@ public class TerminalController : MonoBehaviour
 
     private void OnSubmit(string text)
     {
-        _router.Handle(text);
+        StartCoroutine(HandleSubmit(text));
+    }
+
+    private IEnumerator HandleSubmit(string text)
+    {
+        var trimmed = text.Trim();
+        if (trimmed.Length == 0)
+        {
+            _input.text = string.Empty;
+            _input.ActivateInputField();
+            yield break;
+        }
+
+        _sfx?.PlayBeep();
+        yield return new WaitForSeconds(Random.Range(0.08f, 0.2f));
+        _router.Handle(trimmed);
         _input.text = string.Empty;
         _input.ActivateInputField();
     }

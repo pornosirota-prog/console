@@ -11,12 +11,15 @@ public static class RuntimeBootstrap
         EnsureEventSystem();
         var canvas = BuildCanvas();
         var ui = BuildTerminalUI(canvas.transform);
-        CreateController(ui);
+        var controller = CreateController();
+        var audio = CreateAudio(controller.transform);
+        ui.view.SetAudio(audio);
+        controller.Bind(ui.view, ui.input, audio);
     }
 
     private static void EnsureEventSystem()
     {
-        if (Object.FindObjectOfType<EventSystem>() != null)
+        if (Object.FindFirstObjectByType<EventSystem>() != null)
         {
             return;
         }
@@ -134,7 +137,7 @@ public static class RuntimeBootstrap
         outputText.text = string.Empty;
         outputText.color = new Color(0.8f, 1f, 0.85f, 1f);
         outputText.fontSize = 22;
-        outputText.enableWordWrapping = true;
+        outputText.textWrappingMode = TextWrappingModes.Normal;
         outputText.alignment = TextAlignmentOptions.TopLeft;
 
         var fitter = textObject.AddComponent<ContentSizeFitter>();
@@ -180,7 +183,7 @@ public static class RuntimeBootstrap
         textComponent.text = string.Empty;
         textComponent.fontSize = 22;
         textComponent.color = Color.white;
-        textComponent.enableWordWrapping = false;
+        textComponent.textWrappingMode = TextWrappingModes.NoWrap;
         textComponent.alignment = TextAlignmentOptions.MidlineLeft;
 
         var placeholderObject = new GameObject("Placeholder", typeof(RectTransform));
@@ -211,10 +214,17 @@ public static class RuntimeBootstrap
         return input;
     }
 
-    private static void CreateController((TerminalView view, TMP_InputField input) ui)
+    private static TerminalSfx CreateAudio(Transform parent)
+    {
+        var audioObject = new GameObject("TerminalAudio");
+        audioObject.transform.SetParent(parent, false);
+        return audioObject.AddComponent<TerminalSfx>();
+    }
+
+    private static TerminalController CreateController()
     {
         var controllerObject = new GameObject("TerminalController", typeof(TerminalController));
         var controller = controllerObject.GetComponent<TerminalController>();
-        controller.Bind(ui.view, ui.input);
+        return controller;
     }
 }
