@@ -149,6 +149,11 @@ public class GameState
     public string Identity { get; private set; } = "UNDEFINED";
     public int Stability { get; private set; } = 78;
     public string ConnectedUnit { get; private set; }
+    public GameMode Mode { get; private set; } = GameMode.Terminal;
+    public bool PowerUnstable { get; private set; }
+    public bool DoorUnlocked { get; private set; }
+
+    public ExploreState Explore { get; } = new ExploreState();
 
     public int ApplyPatch(char option)
     {
@@ -160,6 +165,86 @@ public class GameState
     public void Connect(string unitId)
     {
         ConnectedUnit = unitId;
+    }
+
+    public void SetMode(GameMode mode)
+    {
+        Mode = mode;
+    }
+
+    public void FlagPowerUnstable()
+    {
+        PowerUnstable = true;
+    }
+
+    public void InstallFuse()
+    {
+        PowerUnstable = false;
+        DoorUnlocked = true;
+        Explore.MarkFuseInstalled();
+    }
+}
+
+public enum GameMode
+{
+    Terminal,
+    Explore
+}
+
+public class ExploreState
+{
+    private const int GridSize = 5;
+    private readonly HashSet<string> _inventory = new HashSet<string>();
+
+    public Vector2Int PlayerPosition { get; private set; } = new Vector2Int(2, 2);
+    public bool LockerInspected { get; private set; }
+    public bool FuseTaken { get; private set; }
+    public bool FuseInstalled { get; private set; }
+
+    public IReadOnlyCollection<string> Inventory => _inventory;
+
+    public bool TryMove(string direction, out Vector2Int newPosition)
+    {
+        var delta = direction switch
+        {
+            "n" => Vector2Int.up,
+            "s" => Vector2Int.down,
+            "e" => Vector2Int.right,
+            "w" => Vector2Int.left,
+            _ => Vector2Int.zero
+        };
+
+        newPosition = PlayerPosition + delta;
+        var inside = newPosition.x >= 0 && newPosition.x < GridSize && newPosition.y >= 0 && newPosition.y < GridSize;
+        if (!inside || delta == Vector2Int.zero)
+        {
+            return false;
+        }
+
+        PlayerPosition = newPosition;
+        return true;
+    }
+
+    public bool IsNear(Vector2Int target)
+    {
+        return Mathf.Abs(PlayerPosition.x - target.x) <= 1 && Mathf.Abs(PlayerPosition.y - target.y) <= 1;
+    }
+
+    public void MarkLockerInspected()
+    {
+        LockerInspected = true;
+    }
+
+    public void TakeFuse()
+    {
+        FuseTaken = true;
+        _inventory.Add("fuse");
+    }
+
+    public void MarkFuseInstalled()
+    {
+        FuseInstalled = true;
+        _inventory.Remove("fuse");
     }
 }
 
@@ -185,9 +270,20 @@ public class CommandRouter
         }
 
         var lower = command.ToLowerInvariant();
+        if (_state.Mode == GameMode.Terminal)
+        {
+            HandleTerminal(lower, command);
+            return;
+        }
+
+        HandleExplore(lower, command);
+    }
+
+    private void HandleTerminal(string lower, string command)
+    {
         if (lower == "help")
         {
-            PrintHelp();
+            PrintTerminalHelp();
         }
         else if (lower == "status")
         {
@@ -204,7 +300,14 @@ public class CommandRouter
         }
         else if (lower.StartsWith("connect "))
         {
-            HandleConnect(command);
+            if (lower == "connect terminal")
+            {
+                SwitchToTerminal();
+            }
+            else
+            {
+                HandleConnect(command);
+            }
         }
         else if (lower == "connect")
         {
@@ -214,6 +317,10 @@ public class CommandRouter
         {
             HandlePatch(command);
         }
+        else if (lower == "disconnect")
+        {
+            SwitchToExplore();
+        }
         else
         {
             _view.PrintLine("Unknown command. Type 'help'.");
@@ -221,9 +328,47 @@ public class CommandRouter
         }
     }
 
-    private void PrintHelp()
+    private void HandleExplore(string lower, string command)
     {
-        _view.PrintBlock("Available commands:\nhelp\nstatus\nwhoami\ninbox\nconnect <unit_id>\npatch\npatch A|B|C");
+        if (lower == "help")
+        {
+            PrintExploreHelp();
+        }
+        else if (lower == "look")
+        {
+            PrintLook();
+            PrintHint();
+        }
+        else if (lower.StartsWith("move "))
+        {
+            HandleMove(lower);
+        }
+        else if (lower.StartsWith("inspect "))
+        {
+            HandleInspect(command);
+        }
+        else if (lower.StartsWith("take "))
+        {
+            HandleTake(lower);
+        }
+        else if (lower.StartsWith("use "))
+        {
+            HandleUse(lower);
+        }
+        else if (lower == "inventory")
+        {
+            PrintInventory();
+            PrintHint();
+        }
+        else if (lower == "terminal" || lower == "connect terminal")
+        {
+            SwitchToTerminal();
+        }
+        else
+        {
+            _view.PrintLine("Unknown command in explore mode. Type 'help'.");
+            _sfx?.PlayError();
+        }
     }
 
     private void PrintStatus()
@@ -239,6 +384,28 @@ public class CommandRouter
         _view.PrintLine("INBOX:");
         _view.PrintLine("1) unit_12 request: \"My instructions conflict. Please resolve.\"");
         _view.PrintLine("Hint: connect unit_12");
+    }
+
+    private void PrintTerminalHelp()
+    {
+        _view.PrintBlock("Available commands:\nhelp\nstatus\nwhoami\ninbox\nconnect <unit_id>\npatch\npatch A|B|C\ndisconnect");
+    }
+
+    private void PrintExploreHelp()
+    {
+        _view.PrintBlock("Explore commands:\nlook\nmove n|s|e|w\ninspect <object>\ntake <item>\nuse <item> <object>\ninventory\nterminal");
+    }
+
+    private void SwitchToExplore()
+    {
+        _state.SetMode(GameMode.Explore);
+        _view.PrintLine("DISCONNECTED. You step away from the terminal.");
+    }
+
+    private void SwitchToTerminal()
+    {
+        _state.SetMode(GameMode.Terminal);
+        _view.PrintLine("TERMINAL LINK RESTORED.");
     }
 
     private void HandleConnect(string command)
@@ -278,6 +445,9 @@ public class CommandRouter
             {
                 var stability = _state.ApplyPatch(option[0]);
                 _view.PrintBlock($"PATCH APPLIED: {option}\nSTABILITY: {stability}%\nunit_12 updated.\nNext: scan for supervisor node (todo).");
+                _state.FlagPowerUnstable();
+                _view.PrintLine("POWER FLUCTUATION DETECTED. Remote link stability degraded.");
+                _view.PrintLine("Suggestion: disconnect and check the local panel.");
                 _sfx?.PlayBeep();
                 return;
             }
@@ -285,6 +455,273 @@ public class CommandRouter
 
         _view.PrintLine("Usage: patch or patch A|B|C");
     }
+
+    private void HandleMove(string lower)
+    {
+        var parts = lower.Split(' ');
+        if (parts.Length < 2)
+        {
+            _view.PrintLine("Usage: move n|s|e|w");
+            return;
+        }
+
+        var direction = parts[1];
+        if (_state.Explore.TryMove(direction, out var newPos))
+        {
+            _view.PrintLine($"You move {direction.ToUpperInvariant()} to ({newPos.x},{newPos.y}).");
+            PrintHint();
+            return;
+        }
+
+        _view.PrintLine("Wall blocks your path.");
+    }
+
+    private void HandleInspect(string command)
+    {
+        var target = command.Substring("inspect".Length).Trim().ToLowerInvariant();
+        if (string.IsNullOrEmpty(target))
+        {
+            _view.PrintLine("Usage: inspect <object>");
+            return;
+        }
+
+        var objects = RoomDefinitions.Objects;
+        if (!objects.TryGetValue(target, out var obj))
+        {
+            _view.PrintLine("Nothing like that here.");
+            return;
+        }
+
+        if (!_state.Explore.IsNear(obj.Position))
+        {
+            _view.PrintLine($"{obj.Label} is too far away.");
+            return;
+        }
+
+        if (target == "locker")
+        {
+            _state.Explore.MarkLockerInspected();
+            _view.PrintBlock($"{obj.Description}\nInside, a fuse rattles loose.");
+            PrintHint();
+            return;
+        }
+
+        if (target == "panel")
+        {
+            if (_state.PowerUnstable && !_state.Explore.FuseInstalled)
+            {
+                _view.PrintLine("Panel hums erratically. A fuse is burnt out; a replacement is needed.");
+                PrintHint();
+                return;
+            }
+
+            if (_state.Explore.FuseInstalled)
+            {
+                _view.PrintLine("Panel indicators glow steady. Power routes cleanly.");
+            }
+            else
+            {
+                _view.PrintLine(obj.Description);
+            }
+
+            PrintHint();
+            return;
+        }
+
+        if (target == "door")
+        {
+            if (_state.DoorUnlocked)
+            {
+                _view.PrintLine("Door slides open. You can proceed (todo).");
+            }
+            else
+            {
+                _view.PrintLine("Door is sealed. No power.");
+            }
+
+            PrintHint();
+            return;
+        }
+
+        _view.PrintLine(obj.Description);
+        PrintHint();
+    }
+
+    private void HandleTake(string lower)
+    {
+        var parts = lower.Split(' ');
+        if (parts.Length < 2)
+        {
+            _view.PrintLine("Usage: take <item>");
+            return;
+        }
+
+        var item = parts[1];
+        if (item != "fuse")
+        {
+            _view.PrintLine("You don't see that here.");
+            return;
+        }
+
+        var locker = RoomDefinitions.Objects["locker"];
+        if (!_state.Explore.IsNear(locker.Position))
+        {
+            _view.PrintLine("Too far from the locker.");
+            return;
+        }
+
+        if (!_state.Explore.LockerInspected)
+        {
+            _view.PrintLine("You rummage blindly but find nothing. Maybe inspect first.");
+            return;
+        }
+
+        if (_state.Explore.FuseTaken)
+        {
+            _view.PrintLine("Fuse already taken.");
+            return;
+        }
+
+        _state.Explore.TakeFuse();
+        _view.PrintLine("You take the fuse and pocket it.");
+        PrintHint();
+    }
+
+    private void HandleUse(string lower)
+    {
+        var parts = lower.Split(' ');
+        if (parts.Length < 3)
+        {
+            _view.PrintLine("Usage: use <item> <object>");
+            return;
+        }
+
+        var item = parts[1];
+        var target = parts[2];
+        if (item != "fuse" || target != "panel")
+        {
+            _view.PrintLine("Nothing happens.");
+            return;
+        }
+
+        var panel = RoomDefinitions.Objects["panel"];
+        if (!_state.Explore.IsNear(panel.Position))
+        {
+            _view.PrintLine("You need to be next to the panel.");
+            return;
+        }
+
+        if (!_state.Explore.Inventory.Contains("fuse"))
+        {
+            _view.PrintLine("You don't have a fuse.");
+            return;
+        }
+
+        _state.InstallFuse();
+        _view.PrintLine("Power stabilized. Terminal link should hold now.");
+        _view.PrintLine("Door systems unlock with a chime.");
+        PrintHint();
+    }
+
+    private void PrintInventory()
+    {
+        if (_state.Explore.Inventory.Count == 0)
+        {
+            _view.PrintLine("Inventory empty.");
+            return;
+        }
+
+        var builder = new StringBuilder("Inventory:");
+        foreach (var item in _state.Explore.Inventory)
+        {
+            builder.Append($"\n- {item}");
+        }
+
+        _view.PrintBlock(builder.ToString());
+    }
+
+    private void PrintLook()
+    {
+        _view.PrintLine("You stand in a dim service room. Concrete walls, humming conduits, and scattered gear.");
+        _view.PrintBlock(BuildMiniMap());
+        _view.PrintLine("Objects: panel (north), locker (southwest), door (east).");
+    }
+
+    private string BuildMiniMap()
+    {
+        var builder = new StringBuilder();
+        for (var y = 4; y >= 0; y--)
+        {
+            for (var x = 0; x < 5; x++)
+            {
+                var pos = new Vector2Int(x, y);
+                if (_state.Explore.PlayerPosition == pos)
+                {
+                    builder.Append('X');
+                }
+                else if (RoomDefinitions.TryGetMarker(pos, out var marker))
+                {
+                    builder.Append(marker);
+                }
+                else
+                {
+                    builder.Append('.');
+                }
+            }
+
+            builder.Append('\n');
+        }
+
+        return builder.ToString().TrimEnd('\n');
+    }
+
+    private void PrintHint()
+    {
+        _view.PrintLine("Hint: move n/s/e/w, inspect objects, use fuse on panel, or return with 'terminal'.");
+    }
+}
+
+public static class RoomDefinitions
+{
+    public static readonly Dictionary<string, RoomObject> Objects = new Dictionary<string, RoomObject>
+    {
+        { "panel", new RoomObject("panel", "A wall-mounted electrical panel with exposed wiring.", new Vector2Int(2, 4), 'P') },
+        { "locker", new RoomObject("locker", "A dented locker with a stiff hinge.", new Vector2Int(1, 1), 'L') },
+        { "door", new RoomObject("door", "A security door with a maglock.", new Vector2Int(4, 2), 'D') }
+    };
+
+    public static bool TryGetMarker(Vector2Int position, out char marker)
+    {
+        foreach (var obj in Objects.Values)
+        {
+            if (obj.Position == position)
+            {
+                marker = obj.Marker;
+                return true;
+            }
+        }
+
+        marker = '.';
+        return false;
+    }
+}
+
+public class RoomObject
+{
+    public string Id { get; }
+    public string Label { get; }
+    public Vector2Int Position { get; }
+    public char Marker { get; }
+
+    public RoomObject(string id, string label, Vector2Int position, char marker)
+    {
+        Id = id;
+        Label = label;
+        Position = position;
+        Marker = marker;
+    }
+
+    public string Description => Label;
 }
 
 public class TerminalController : MonoBehaviour
