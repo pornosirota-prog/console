@@ -117,7 +117,7 @@ public static class RuntimeBootstrap
         contentRect.anchorMax = new Vector2(1, 1);
         contentRect.pivot = new Vector2(0.5f, 1f);
         contentRect.offsetMin = new Vector2(16, 16);
-        contentRect.offsetMax = new Vector2(-16, -16);
+        contentRect.offsetMax = new Vector2(-32, -16);
 
         var contentLayout = content.AddComponent<VerticalLayoutGroup>();
         contentLayout.childControlWidth = true;
@@ -150,6 +150,40 @@ public static class RuntimeBootstrap
         scrollRect.horizontal = false;
         scrollRect.vertical = true;
         scrollRect.movementType = ScrollRect.MovementType.Clamped;
+        scrollRect.scrollSensitivity = 60f;
+
+        var scrollbarObject = new GameObject("Scrollbar", typeof(RectTransform), typeof(Image), typeof(Scrollbar));
+        var scrollbarRect = scrollbarObject.GetComponent<RectTransform>();
+        scrollbarRect.SetParent(scrollObject.transform, false);
+        scrollbarRect.anchorMin = new Vector2(1, 0);
+        scrollbarRect.anchorMax = new Vector2(1, 1);
+        scrollbarRect.pivot = new Vector2(1, 1);
+        scrollbarRect.sizeDelta = new Vector2(12, 0);
+        scrollbarRect.offsetMin = new Vector2(-20, 8);
+        scrollbarRect.offsetMax = new Vector2(-8, -8);
+
+        var scrollbarBackground = scrollbarObject.GetComponent<Image>();
+        scrollbarBackground.color = new Color(0.15f, 0.15f, 0.18f, 1f);
+
+        var handleObject = new GameObject("Handle", typeof(RectTransform), typeof(Image));
+        var handleRect = handleObject.GetComponent<RectTransform>();
+        handleRect.SetParent(scrollbarObject.transform, false);
+        handleRect.anchorMin = Vector2.zero;
+        handleRect.anchorMax = Vector2.one;
+        handleRect.offsetMin = new Vector2(2, 2);
+        handleRect.offsetMax = new Vector2(-2, -2);
+
+        var handleImage = handleObject.GetComponent<Image>();
+        handleImage.color = new Color(0.65f, 0.92f, 0.75f, 0.9f);
+
+        var scrollbar = scrollbarObject.GetComponent<Scrollbar>();
+        scrollbar.direction = Scrollbar.Direction.BottomToTop;
+        scrollbar.targetGraphic = handleImage;
+        scrollbar.handleRect = handleRect;
+
+        scrollRect.verticalScrollbar = scrollbar;
+        scrollRect.verticalScrollbarVisibility = ScrollRect.ScrollbarVisibility.AutoHideAndExpandViewport;
+        scrollRect.verticalScrollbarSpacing = -8f;
 
         var layout = scrollObject.AddComponent<LayoutElement>();
         layout.flexibleHeight = 1f;
@@ -207,6 +241,10 @@ public static class RuntimeBootstrap
         input.lineType = TMP_InputField.LineType.SingleLine;
         input.characterLimit = 256;
         input.transition = Selectable.Transition.None;
+        input.customCaretColor = true;
+        input.caretColor = new Color(0.65f, 0.95f, 0.75f, 1f);
+        input.caretWidth = 4;
+        input.caretBlinkRate = 0.75f;
 
         var layoutElement = inputObject.AddComponent<LayoutElement>();
         layoutElement.minHeight = 50;
